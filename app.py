@@ -1,12 +1,9 @@
-"""
-app.py — KIORA Web · FastAPI backend
-"""
 import os, asyncio, random, uuid, json
 from datetime import datetime, timezone
 from typing import Optional
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request, Form, Depends, HTTPException, BackgroundTasks
+from fastapi import FastAPI, Request, Form, Depends, HTTPException, BackgroundTasks, File, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -21,14 +18,12 @@ import notifier
 SECRET_KEY = os.getenv("SECRET_KEY", "change-me-please-kiora-2026")
 signer = URLSafeSerializer(SECRET_KEY, salt="kiora-session-v1")
 
-# ── background task registry ─────────────────────────────────────
 _tasks: dict[str, asyncio.Task] = {}
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await db.init_db()
     yield
-    # shutdown
     for t in list(_tasks.values()):
         if not t.done(): t.cancel()
     await checker.close_session()
@@ -39,7 +34,6 @@ app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
-# ── auth helpers ─────────────────────────────────────────────────
 def _set_session(resp, uid: int):
     resp.set_cookie("sess", signer.dumps({"uid": uid}), httponly=True, samesite="lax", max_age=86400 * 7)
 
@@ -66,7 +60,6 @@ async def require_admin(request: Request):
     if u["role"] != "admin": raise HTTPException(status_code=403)
     return u
 
-# ── routes: auth ─────────────────────────────────────────────────
 @app.get("/", response_class=HTMLResponse)
 async def root(request: Request):
     u = await current_user(request)
@@ -99,7 +92,6 @@ async def logout():
     _clear_session(resp)
     return resp
 
-# ── routes: user dashboard ───────────────────────────────────────
 @app.get("/dashboard", response_class=HTMLResponse)
 async def user_dashboard(request: Request):
     u = await require_user(request)
@@ -139,19 +131,28 @@ async def user_hits(request: Request):
         "request": request, "u": u, "tab": "hits", "hits": hits, "plans": db.PLANS,
     })
 
-# ── user actions ─────────────────────────────────────────────────
 @app.post("/proxies/add")
-async def proxies_add(request: Request):
+async def proxies_add(request: Request, proxies_text: str = Form(None), proxy_file: UploadFile = File(None)):
     u = await require_user(request)
-    form = await request.form()
-    raw = (form.get("proxies") or "").strip()
-    if not raw: return RedirectResponse("/proxies", 303)
+    
+    raw_content = ""
+    if proxies_text:
+        raw_content += proxies_text + "\n"
+        
+    if proxy_file and proxy_file.filename:
+        contents = await proxy_file.read()
+        raw_content += contents.decode("utf-8", errors="ignore") + "\n"
+
+    if not raw_content.strip():
+        return RedirectResponse("/proxies", 303)
+
     count = 0
-    for line in raw.replace(",", "\n").splitlines():
+    for line in raw_content.replace(",", "\n").splitlines():
         p = line.strip()
         if not p: continue
         await db.add_proxy(u["id"], p)
         count += 1
+        
     return RedirectResponse("/proxies", 303)
 
 @app.post("/proxies/check")
@@ -187,18 +188,24 @@ async def proxies_clear(request: Request):
     return RedirectResponse("/proxies", 303)
 
 @app.post("/start-task")
-async def start_task(request: Request):
+async def start_task(request: Request, cards_text: str = Form(None), cards_file: UploadFile = File(None), mode: str = Form("shopify")):
     u = await require_user(request)
-    form = await request.form()
-    cards_raw = (form.get("cards") or "").strip()
-    mode = (form.get("mode") or "shopify").strip()
+    
+    raw_content = ""
+    if cards_text:
+        raw_content += cards_text + "\n"
+        
+    if cards_file and cards_file.filename:
+        contents = await cards_file.read()
+        raw_content += contents.decode("utf-8", errors="ignore") + "\n"
 
     cards = []
     seen = set()
-    for tok in cards_raw.replace(",", "\n").splitlines():
+    for tok in raw_content.replace(",", "\n").splitlines():
         n = checker.normalize_cc(tok)
         if n and n not in seen:
             seen.add(n); cards.append(n)
+            
     if not cards:
         return RedirectResponse("/cards?error=no_cards", 303)
 
@@ -233,7 +240,6 @@ async def _run_task(tid: str, uid: int, email: str, cards: list, proxies: list, 
         px_idx += 1
 
         res = None
-        # Try load balancer first (if enabled)
         if (lb_vps or lb_hrk) and mode == "shopify":
             managers = []
             if lb_vps: managers.append(node_client.NODE_MANAGER_VPS)
@@ -249,7 +255,6 @@ async def _run_task(tid: str, uid: int, email: str, cards: list, proxies: list, 
                 except Exception:
                     continue
 
-        # Fallback / no LB: use API endpoint
         if res is None:
             api = apis[api_idx % len(apis)]
             api_idx += 1
@@ -267,7 +272,6 @@ async def _run_task(tid: str, uid: int, email: str, cards: list, proxies: list, 
         else:
             declined += 1
 
-        # Update task progress every few cards
         if completed % 3 == 0 or completed == len(cards):
             await db.update_task(tid, completed=completed, hits=hits, declined=declined, errors=errors)
 
@@ -281,7 +285,6 @@ async def api_task(tid: str, request: Request):
         return JSONResponse({"error": "not found"}, status_code=404)
     return JSONResponse(dict(t))
 
-# ── admin dashboard ──────────────────────────────────────────────
 @app.get("/admin", response_class=HTMLResponse)
 async def admin_dash(request: Request, tab: str = "overview"):
     u = await require_admin(request)
