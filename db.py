@@ -43,6 +43,7 @@ def _conn():
 
 async def init_db():
     async with _conn() as c:
+        # 1. Create Tables
         await c.executescript("""
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -134,14 +135,13 @@ async def init_db():
         );
         """)
 
-        async with c.execute("SELECT id FROM users WHERE email=?", (ADMIN_EMAIL,)) as cur:
-            row = await cur.fetchone()
-        if not row:
-            await c.execute(
-                "INSERT INTO users (email, password_hash, role, plan, credits, created_at) VALUES (?,?,?,?,?,?)",
-                (ADMIN_EMAIL, hash_pw(ADMIN_PASSWORD), "admin", "unlimited", 999999, now_iso()),
-            )
+        # 2. Seed admin safely (INSERT OR IGNORE prevents crashes on restart)
+        await c.execute(
+            "INSERT OR IGNORE INTO users (email, password_hash, role, plan, credits, created_at) VALUES (?,?,?,?,?,?)",
+            (ADMIN_EMAIL, hash_pw(ADMIN_PASSWORD), "admin", "unlimited", 999999, now_iso()),
+        )
 
+        # 3. Seed settings safely
         defaults = {
             "telegram_bot_token": "",
             "telegram_chat_id": "",
@@ -154,20 +154,24 @@ async def init_db():
         for k, v in defaults.items():
             await c.execute("INSERT OR IGNORE INTO settings(key, value) VALUES (?,?)", (k, v))
 
+        # 4. Seed default APIs safely
         async with c.execute("SELECT COUNT(*) FROM api_endpoints") as cur:
             n = (await cur.fetchone())[0]
         if n == 0:
-            defaults_api = [
-                ("http://107.148.78.54:8083/shopify", "raw", 900, 0, ""),
-                ("http://107.148.78.54:8084/shopify", "raw", 900, 0, ""),
-            ]
-            for url, style, cap, sr, key in defaults_api:
+            try:
                 await c.execute(
                     "INSERT INTO api_endpoints (url, style, cap, enabled, key, site_required, created_at) VALUES (?,?,?,1,?,?,?)",
-                    (url, style, cap, key, sr, now_iso()),
+                    ("http://107.148.78.54:8083/shopify", "raw", 900, "", 0, now_iso()),
                 )
+                await c.execute(
+                    "INSERT INTO api_endpoints (url, style, cap, enabled, key, site_required, created_at) VALUES (?,?,?,1,?,?,?)",
+                    ("http://107.148.78.54:8084/shopify", "raw", 900, "", 0, now_iso()),
+                )
+            except Exception:
+                pass # Ignore if it fails due to multiple workers starting at once
 
         await c.commit()
+
 
 async def get_user_by_email(email: str):
     async with _conn() as c:
