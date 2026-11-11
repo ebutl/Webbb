@@ -60,10 +60,15 @@
 {% elif tab == 'proxies' %}
 <section class="panel">
   <h2>Add Proxies</h2>
-  <form method="post" action="/proxies/add">
-    <textarea name="proxies" rows="6" placeholder="host:port:user:pass&#10;or&#10;user:pass@host:port&#10;one per line"></textarea>
+  <form method="post" action="/proxies/add" enctype="multipart/form-data">
+    <label>Paste Proxies (host:port:user:pass)</label>
+    <textarea name="proxies_text" rows="4" placeholder="one per line"></textarea>
+    
+    <label>Or Upload File (.txt)</label>
+    <input type="file" name="proxy_file" accept=".txt" style="margin-bottom: 12px;">
+    
     <div class="row">
-      <button type="submit" class="btn-primary">Add</button>
+      <button type="submit" class="btn-primary">Add Proxies</button>
     </div>
   </form>
   <div class="row row-gap">
@@ -100,9 +105,14 @@
   {% if request.query_params.get('error') == 'no_proxies' %}<div class="alert">Add at least one live proxy first.</div>{% endif %}
   {% if request.query_params.get('error', '').startswith('limit_') %}<div class="alert">You sent more than your plan allows ({{ request.query_params.get('error').replace('limit_','') }}).</div>{% endif %}
   {% if request.query_params.get('started') %}<div class="alert alert-ok">Task started: <code>{{ request.query_params.get('started') }}</code>. You can close this tab.</div>{% endif %}
-  <form method="post" action="/start-task">
-    <label>Cards (one per line, format CC|MM|YY|CVV)</label>
-    <textarea name="cards" rows="10" required placeholder="4111111111111111|12|30|123&#10;5555555555554444|08|28|456"></textarea>
+  
+  <form method="post" action="/start-task" enctype="multipart/form-data">
+    <label>Paste Cards / Sites (CC|MM|YY|CVV)</label>
+    <textarea name="cards_text" rows="6" placeholder="4111111111111111|12|30|123&#10;5555555555554444|08|28|456"></textarea>
+    
+    <label>Or Upload File (.txt)</label>
+    <input type="file" name="cards_file" accept=".txt" style="margin-bottom: 12px;">
+    
     <div class="row">
       <select name="mode">
         <option value="shopify">Shopify</option>
