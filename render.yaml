@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: kiora-web
+    env: python
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DB_PATH
+        value: /data/kiora.db
+      - key: ADMIN_EMAIL
+        value: yousafcodes.de@gmail.com
+      - key: ADMIN_PASSWORD
+        value: "03283877877@_1"
+      - key: PYTHON_VERSION
+        value: 3.11.9
+    disk:
+      name: kiora-data
+      mountPath: /data
+      sizeGB: 1
