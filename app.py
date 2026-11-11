@@ -22,8 +22,17 @@ _tasks: dict[str, asyncio.Task] = {}
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await db.init_db()
+    print("⏳ Booting KIORA...")
+    try:
+        await db.init_db()
+        print("✅ Database ready.")
+    except Exception as e:
+        print(f"❌ DB FAILED: {e}")
+        raise e
+        
     yield
+    
+    print("🛑 Shutting down...")
     for t in list(_tasks.values()):
         if not t.done(): t.cancel()
     await checker.close_session()
