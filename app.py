@@ -1,10 +1,14 @@
-import os, asyncio, random, uuid, json
+import os, asyncio, random, uuid, json, traceback
 from datetime import datetime, timezone
 from typing import Optional
 from contextlib import asynccontextmanager
 
+# ── AUTO-CREATE FOLDERS SO RENDER DOESN'T CRASH ──
+os.makedirs("templates", exist_ok=True)
+os.makedirs("static", exist_ok=True)
+
 from fastapi import FastAPI, Request, Form, Depends, HTTPException, BackgroundTasks, File, UploadFile
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from itsdangerous import URLSafeSerializer
@@ -28,11 +32,9 @@ async def lifespan(app: FastAPI):
         print("✅ Database ready.")
     except Exception as e:
         print(f"❌ DB FAILED: {e}")
-        raise e
         
     yield
     
-    print("🛑 Shutting down...")
     for t in list(_tasks.values()):
         if not t.done(): t.cancel()
     await checker.close_session()
@@ -40,6 +42,16 @@ async def lifespan(app: FastAPI):
     await node_client.NODE_MANAGER_HEROKU.close()
 
 app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None)
+
+# ── DEBUG: CATCH ALL ERRORS AND SHOW ON SCREEN ──
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    return PlainTextResponse(
+        f"🚨 REAL ERROR FOUND 🚨\n\n{traceback.format_exc()}\n\n"
+        "Tell the developer this exact message.", 
+        status_code=500
+    )
+
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
@@ -79,15 +91,15 @@ async def root(request: Request):
 async def login_page(request: Request):
     u = await current_user(request)
     if u: return RedirectResponse("/admin" if u["role"] == "admin" else "/dashboard")
-    return templates.TemplateResponse("login.html", {"request": request, "error": ""})
+    return templates.TemplateResponse(request=request, name="login.html", context={"error": ""})
 
 @app.post("/login")
 async def login_submit(request: Request, email: str = Form(...), password: str = Form(...)):
     u = await db.get_user_by_email(email.strip().lower())
     if not u or not db.verify_pw(password, u["password_hash"]):
-        return templates.TemplateResponse("login.html", {"request": request, "error": "Invalid email or password."}, status_code=401)
+        return templates.TemplateResponse(request=request, name="login.html", context={"error": "Invalid email or password."}, status_code=401)
     if u["banned"]:
-        return templates.TemplateResponse("login.html", {"request": request, "error": "Account suspended."}, status_code=403)
+        return templates.TemplateResponse(request=request, name="login.html", context={"error": "Account suspended."}, status_code=403)
     async with db._conn() as c:
         await c.execute("UPDATE users SET last_login=? WHERE id=?", (db.now_iso(), u["id"]))
         await c.commit()
@@ -108,8 +120,8 @@ async def user_dashboard(request: Request):
     proxies = await db.list_proxies(u["id"])
     tasks = await db.list_user_tasks(u["id"], 15)
     hits = await db.list_user_hits(u["id"], 10)
-    return templates.TemplateResponse("user.html", {
-        "request": request, "u": u, "tab": "dashboard",
+    return templates.TemplateResponse(request=request, name="user.html", context={
+        "u": u, "tab": "dashboard",
         "proxies": proxies, "tasks": tasks, "hits": hits,
         "plans": db.PLANS,
     })
@@ -119,16 +131,16 @@ async def user_proxies(request: Request):
     u = await require_user(request)
     if u["role"] == "admin": return RedirectResponse("/admin")
     proxies = await db.list_proxies(u["id"])
-    return templates.TemplateResponse("user.html", {
-        "request": request, "u": u, "tab": "proxies", "proxies": proxies, "plans": db.PLANS,
+    return templates.TemplateResponse(request=request, name="user.html", context={
+        "u": u, "tab": "proxies", "proxies": proxies, "plans": db.PLANS,
     })
 
 @app.get("/cards", response_class=HTMLResponse)
 async def user_cards(request: Request):
     u = await require_user(request)
     if u["role"] == "admin": return RedirectResponse("/admin")
-    return templates.TemplateResponse("user.html", {
-        "request": request, "u": u, "tab": "cards", "plans": db.PLANS,
+    return templates.TemplateResponse(request=request, name="user.html", context={
+        "u": u, "tab": "cards", "plans": db.PLANS,
     })
 
 @app.get("/hits", response_class=HTMLResponse)
@@ -136,31 +148,24 @@ async def user_hits(request: Request):
     u = await require_user(request)
     if u["role"] == "admin": return RedirectResponse("/admin")
     hits = await db.list_user_hits(u["id"], 500)
-    return templates.TemplateResponse("user.html", {
-        "request": request, "u": u, "tab": "hits", "hits": hits, "plans": db.PLANS,
+    return templates.TemplateResponse(request=request, name="user.html", context={
+        "u": u, "tab": "hits", "hits": hits, "plans": db.PLANS,
     })
 
 @app.post("/proxies/add")
 async def proxies_add(request: Request, proxies_text: str = Form(None), proxy_file: UploadFile = File(None)):
     u = await require_user(request)
-    
     raw_content = ""
-    if proxies_text:
-        raw_content += proxies_text + "\n"
-        
+    if proxies_text: raw_content += proxies_text + "\n"
     if proxy_file and proxy_file.filename:
         contents = await proxy_file.read()
         raw_content += contents.decode("utf-8", errors="ignore") + "\n"
 
-    if not raw_content.strip():
-        return RedirectResponse("/proxies", 303)
+    if not raw_content.strip(): return RedirectResponse("/proxies", 303)
 
-    count = 0
     for line in raw_content.replace(",", "\n").splitlines():
         p = line.strip()
-        if not p: continue
-        await db.add_proxy(u["id"], p)
-        count += 1
+        if p: await db.add_proxy(u["id"], p)
         
     return RedirectResponse("/proxies", 303)
 
@@ -199,11 +204,8 @@ async def proxies_clear(request: Request):
 @app.post("/start-task")
 async def start_task(request: Request, cards_text: str = Form(None), cards_file: UploadFile = File(None), mode: str = Form("shopify")):
     u = await require_user(request)
-    
     raw_content = ""
-    if cards_text:
-        raw_content += cards_text + "\n"
-        
+    if cards_text: raw_content += cards_text + "\n"
     if cards_file and cards_file.filename:
         contents = await cards_file.read()
         raw_content += contents.decode("utf-8", errors="ignore") + "\n"
@@ -215,17 +217,14 @@ async def start_task(request: Request, cards_text: str = Form(None), cards_file:
         if n and n not in seen:
             seen.add(n); cards.append(n)
             
-    if not cards:
-        return RedirectResponse("/cards?error=no_cards", 303)
+    if not cards: return RedirectResponse("/cards?error=no_cards", 303)
 
     plan = u["plan"] if u["plan"] in db.PLANS else "free"
     limit = db.PLANS[plan]["mass_limit"]
-    if len(cards) > limit:
-        return RedirectResponse(f"/cards?error=limit_{limit}", 303)
+    if len(cards) > limit: return RedirectResponse(f"/cards?error=limit_{limit}", 303)
 
     proxies = await db.live_proxies(u["id"])
-    if not proxies and u["role"] != "admin":
-        return RedirectResponse("/cards?error=no_proxies", 303)
+    if not proxies and u["role"] != "admin": return RedirectResponse("/cards?error=no_proxies", 303)
 
     tid = uuid.uuid4().hex[:12]
     await db.create_task(tid, u["id"], len(cards), mode)
@@ -240,15 +239,13 @@ async def _run_task(tid: str, uid: int, email: str, cards: list, proxies: list, 
 
     lb_vps = (await db.get_setting("lb_vps_enabled", "1")) == "1"
     lb_hrk = (await db.get_setting("lb_heroku_enabled", "1")) == "1"
-    api_idx = 0
-    px_idx = 0
-    completed = 0; hits = 0; declined = 0; errors = 0
+    api_idx = 0; px_idx = 0; completed = 0; hits = 0; declined = 0; errors = 0
 
     for cc in cards:
         proxy = proxies[px_idx % len(proxies)] if proxies else None
         px_idx += 1
-
         res = None
+
         if (lb_vps or lb_hrk) and mode == "shopify":
             managers = []
             if lb_vps: managers.append(node_client.NODE_MANAGER_VPS)
@@ -261,8 +258,7 @@ async def _run_task(tid: str, uid: int, email: str, cards: list, proxies: list, 
                         res = checker.parse_response(json.dumps(raw), 200)
                         res["_rtt"] = round((raw.get("_rtt_ms") or 0) / 1000, 2)
                         break
-                except Exception:
-                    continue
+                except Exception: continue
 
         if res is None:
             api = apis[api_idx % len(apis)]
@@ -278,8 +274,7 @@ async def _run_task(tid: str, uid: int, email: str, cards: list, proxies: list, 
             except: pass
         elif cls in ("error", "timeout", "site_error", "proxy_error", "rate_limited"):
             errors += 1
-        else:
-            declined += 1
+        else: declined += 1
 
         if completed % 3 == 0 or completed == len(cards):
             await db.update_task(tid, completed=completed, hits=hits, declined=declined, errors=errors)
@@ -306,8 +301,8 @@ async def admin_dash(request: Request, tab: str = "overview"):
     for key in ("telegram_bot_token", "telegram_chat_id", "telegram_enabled", "site_mode", "lb_vps_enabled", "lb_heroku_enabled"):
         settings[key] = await db.get_setting(key, "")
 
-    return templates.TemplateResponse("admin.html", {
-        "request": request, "u": u, "tab": tab,
+    return templates.TemplateResponse(request=request, name="admin.html", context={
+        "u": u, "tab": tab,
         "users": users, "apis": apis, "hits": hits, "tasks": tasks, "codes": codes,
         "settings": settings, "plans": db.PLANS,
         "node_vps": node_client.NODE_MANAGER_VPS.summary(),
@@ -322,10 +317,8 @@ async def admin_user_create(request: Request):
     password = (form.get("password") or "").strip()
     plan = (form.get("plan") or "free").strip()
     if not email or not password: return RedirectResponse("/admin?tab=users&error=missing", 303)
-    try:
-        await db.create_user(email, password, plan)
-    except Exception:
-        return RedirectResponse("/admin?tab=users&error=exists", 303)
+    try: await db.create_user(email, password, plan)
+    except Exception: return RedirectResponse("/admin?tab=users&error=exists", 303)
     return RedirectResponse("/admin?tab=users", 303)
 
 @app.post("/admin/users/plan/{uid}")
@@ -358,8 +351,7 @@ async def admin_api_add(request: Request):
     cap = int(form.get("cap") or 900)
     site_req = int(form.get("site_required") or 0)
     key = (form.get("key") or "").strip()
-    if url:
-        await db.add_api(url, style, cap, site_req, key)
+    if url: await db.add_api(url, style, cap, site_req, key)
     return RedirectResponse("/admin?tab=apis", 303)
 
 @app.post("/admin/apis/toggle/{aid}")
@@ -379,8 +371,7 @@ async def admin_settings_save(request: Request):
     await require_admin(request)
     form = await request.form()
     for key in ("telegram_bot_token", "telegram_chat_id", "telegram_enabled", "site_mode", "lb_vps_enabled", "lb_heroku_enabled"):
-        if key in form:
-            await db.set_setting(key, str(form.get(key) or ""))
+        if key in form: await db.set_setting(key, str(form.get(key) or ""))
     return RedirectResponse("/admin?tab=settings", 303)
 
 @app.post("/admin/codes/create")
