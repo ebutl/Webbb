@@ -1,0 +1,253 @@
+{% extends "base.html" %}
+{% block title %}KIORA · Admin{% endblock %}
+{% block topnav %}
+<nav class="tabs">
+  <a href="/admin?tab=overview" class="{{ 'active' if tab=='overview' else '' }}">Overview</a>
+  <a href="/admin?tab=users"    class="{{ 'active' if tab=='users'    else '' }}">Users</a>
+  <a href="/admin?tab=apis"     class="{{ 'active' if tab=='apis'     else '' }}">APIs</a>
+  <a href="/admin?tab=hits"     class="{{ 'active' if tab=='hits'     else '' }}">All Hits</a>
+  <a href="/admin?tab=tasks"    class="{{ 'active' if tab=='tasks'    else '' }}">Tasks</a>
+  <a href="/admin?tab=codes"    class="{{ 'active' if tab=='codes'    else '' }}">Codes</a>
+  <a href="/admin?tab=settings" class="{{ 'active' if tab=='settings' else '' }}">Settings</a>
+</nav>
+{% endblock %}
+{% block content %}
+
+{% if tab == 'overview' %}
+<section class="grid">
+  <div class="stat"><span class="stat-label">Users</span><span class="stat-val">{{ users|length }}</span></div>
+  <div class="stat"><span class="stat-label">APIs (enabled)</span><span class="stat-val">{{ apis|selectattr('enabled','equalto',1)|list|length }}/{{ apis|length }}</span></div>
+  <div class="stat"><span class="stat-label">Total Hits</span><span class="stat-val">{{ hits|length }}</span></div>
+  <div class="stat"><span class="stat-label">Active Tasks</span><span class="stat-val">{{ tasks|selectattr('status','equalto','running')|list|length }}</span></div>
+  <div class="stat"><span class="stat-label">VPS Pool</span><span class="stat-val">{{ node_vps.available }}/{{ node_vps.total }}</span></div>
+  <div class="stat"><span class="stat-label">HRK Pool</span><span class="stat-val">{{ node_hrk.available }}/{{ node_hrk.total }}</span></div>
+</section>
+
+<section class="panel">
+  <h2>Recent Hits</h2>
+  {% if hits %}
+  <table>
+    <thead><tr><th>User</th><th>Card</th><th>Status</th><th>Response</th><th>Date</th></tr></thead>
+    <tbody>
+    {% for h in hits[:20] %}
+      <tr>
+        <td>{{ h.email }}</td>
+        <td><code>{{ h.cc }}</code></td>
+        <td><span class="pill pill-{{ h.status }}">{{ h.status }}</span></td>
+        <td>{{ h.response }}</td>
+        <td>{{ h.created_at[:19] }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}<p class="muted">No hits yet.</p>{% endif %}
+</section>
+
+{% elif tab == 'users' %}
+<section class="panel">
+  <h2>Create User</h2>
+  <form method="post" action="/admin/users/create" class="row row-gap">
+    <input type="email" name="email" placeholder="email" required>
+    <input type="text" name="password" placeholder="password" required>
+    <select name="plan">
+      {% for k, p in plans.items() %}<option value="{{ k }}">{{ p.name }}</option>{% endfor %}
+    </select>
+    <button class="btn-primary" type="submit">Create</button>
+  </form>
+</section>
+
+<section class="panel">
+  <h2>Users ({{ users|length }})</h2>
+  <table>
+    <thead><tr><th>ID</th><th>Email</th><th>Role</th><th>Plan</th><th>Hits</th><th>Status</th><th>Actions</th></tr></thead>
+    <tbody>
+    {% for x in users %}
+      <tr>
+        <td>{{ x.id }}</td>
+        <td>{{ x.email }}</td>
+        <td><span class="pill">{{ x.role }}</span></td>
+        <td>{{ plans[x.plan].name if x.plan in plans else x.plan }}</td>
+        <td>{{ x.total_hits }}</td>
+        <td>{% if x.banned %}<span class="pill pill-error">banned</span>{% else %}<span class="pill pill-live">active</span>{% endif %}</td>
+        <td class="actions">
+          {% if x.role != 'admin' %}
+          <form method="post" action="/admin/users/plan/{{ x.id }}" class="inline">
+            <select name="plan">
+              {% for k, p in plans.items() %}<option value="{{ k }}" {{ 'selected' if x.plan==k else '' }}>{{ p.name }}</option>{% endfor %}
+            </select>
+            <input type="number" name="days" value="30" style="width:60px">
+            <button type="submit" class="btn-link">Set Plan</button>
+          </form>
+          <form method="post" action="/admin/users/ban/{{ x.id }}" class="inline"><button class="btn-link">{{ 'Unban' if x.banned else 'Ban' }}</button></form>
+          <form method="post" action="/admin/users/delete/{{ x.id }}" class="inline" onsubmit="return confirm('Delete user?')"><button class="btn-link btn-link-danger">Delete</button></form>
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+{% elif tab == 'apis' %}
+<section class="panel">
+  <h2>Add API</h2>
+  <form method="post" action="/admin/apis/add" class="row row-gap">
+    <input type="text" name="url" placeholder="http://host:port/endpoint" required style="flex:2">
+    <select name="style"><option value="params">params</option><option value="raw">raw</option></select>
+    <input type="number" name="cap" placeholder="cap" value="900" style="width:80px">
+    <select name="site_required"><option value="0">no site</option><option value="1">site req</option></select>
+    <input type="text" name="key" placeholder="key (optional)">
+    <button class="btn-primary" type="submit">Add</button>
+  </form>
+</section>
+
+<section class="panel">
+  <h2>APIs ({{ apis|length }})</h2>
+  <table>
+    <thead><tr><th>ID</th><th>URL</th><th>Style</th><th>Site</th><th>Cap</th><th>Status</th><th></th></tr></thead>
+    <tbody>
+    {% for a in apis %}
+      <tr>
+        <td>{{ a.id }}</td>
+        <td><code>{{ a.url }}</code></td>
+        <td>{{ a.style }}</td>
+        <td>{{ 'required' if a.site_required else 'siteless' }}</td>
+        <td>{{ a.cap }}</td>
+        <td>
+          {% if a.enabled %}<span class="pill pill-live">enabled</span>{% else %}<span class="pill pill-error">disabled</span>{% endif %}
+        </td>
+        <td class="actions">
+          <form method="post" action="/admin/apis/toggle/{{ a.id }}" class="inline"><button class="btn-link">{{ 'Disable' if a.enabled else 'Enable' }}</button></form>
+          <form method="post" action="/admin/apis/delete/{{ a.id }}" class="inline" onsubmit="return confirm('Remove API?')"><button class="btn-link btn-link-danger">Remove</button></form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+{% elif tab == 'hits' %}
+<section class="panel">
+  <h2>All Hits</h2>
+  {% if hits %}
+  <table>
+    <thead><tr><th>User</th><th>Card</th><th>Status</th><th>Response</th><th>Amount</th><th>Date</th><th></th></tr></thead>
+    <tbody>
+    {% for h in hits %}
+      <tr>
+        <td>{{ h.email }}</td>
+        <td><code>{{ h.cc }}</code></td>
+        <td><span class="pill pill-{{ h.status }}">{{ h.status }}</span></td>
+        <td>{{ h.response }}</td>
+        <td>${{ '%.2f'|format(h.amount) }}</td>
+        <td>{{ h.created_at[:19] }}</td>
+        <td><form method="post" action="/admin/hits/delete/{{ h.id }}" class="inline"><button class="btn-link btn-link-danger">×</button></form></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}<p class="muted">No hits yet.</p>{% endif %}
+</section>
+
+{% elif tab == 'tasks' %}
+<section class="panel">
+  <h2>All Tasks</h2>
+  {% if tasks %}
+  <table>
+    <thead><tr><th>ID</th><th>User</th><th>Progress</th><th>Hits</th><th>Status</th><th>Started</th></tr></thead>
+    <tbody>
+    {% for t in tasks %}
+      <tr>
+        <td><code>{{ t.id }}</code></td>
+        <td>{{ t.email }}</td>
+        <td>{{ t.completed }}/{{ t.total }}</td>
+        <td>{{ t.hits }}</td>
+        <td><span class="pill pill-{{ t.status }}">{{ t.status }}</span></td>
+        <td>{{ t.started_at[:19] }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}<p class="muted">No tasks yet.</p>{% endif %}
+</section>
+
+{% elif tab == 'codes' %}
+<section class="panel">
+  <h2>Create Redeem Code</h2>
+  <form method="post" action="/admin/codes/create" class="row row-gap">
+    <select name="plan">
+      {% for k, p in plans.items() %}{% if k != 'free' %}<option value="{{ k }}">{{ p.name }}</option>{% endif %}{% endfor %}
+    </select>
+    <input type="number" name="days" value="30" placeholder="days" style="width:100px">
+    <input type="number" name="uses" value="1" placeholder="max uses" style="width:100px">
+    <button class="btn-primary" type="submit">Generate</button>
+  </form>
+</section>
+
+<section class="panel">
+  <h2>Codes ({{ codes|length }})</h2>
+  <table>
+    <thead><tr><th>Code</th><th>Plan</th><th>Days</th><th>Uses</th><th>Created</th></tr></thead>
+    <tbody>
+    {% for c in codes %}
+      <tr>
+        <td><code>{{ c.code }}</code></td>
+        <td>{{ c.plan }}</td>
+        <td>{{ c.days }}</td>
+        <td>{{ c.used }}/{{ c.max_uses }}</td>
+        <td>{{ c.created_at[:19] }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+{% elif tab == 'settings' %}
+<section class="panel">
+  <h2>Telegram Bot Forwarding</h2>
+  <form method="post" action="/admin/settings">
+    <input type="hidden" name="site_mode" value="{{ settings.site_mode }}">
+    <input type="hidden" name="lb_vps_enabled" value="{{ settings.lb_vps_enabled }}">
+    <input type="hidden" name="lb_heroku_enabled" value="{{ settings.lb_heroku_enabled }}">
+
+    <label>Bot Token</label>
+    <input type="text" name="telegram_bot_token" value="{{ settings.telegram_bot_token }}" placeholder="123456789:ABC...">
+
+    <label>Chat ID (private, group, channel)</label>
+    <input type="text" name="telegram_chat_id" value="{{ settings.telegram_chat_id }}" placeholder="-1001234567890">
+
+    <label>Enable forwarding</label>
+    <select name="telegram_enabled">
+      <option value="0" {{ 'selected' if settings.telegram_enabled != '1' else '' }}>Disabled</option>
+      <option value="1" {{ 'selected' if settings.telegram_enabled == '1' else '' }}>Enabled</option>
+    </select>
+
+    <button class="btn-primary" type="submit">Save</button>
+  </form>
+</section>
+
+<section class="panel">
+  <h2>Load Balancing</h2>
+  <form method="post" action="/admin/settings" class="row row-gap">
+    <input type="hidden" name="telegram_bot_token" value="{{ settings.telegram_bot_token }}">
+    <input type="hidden" name="telegram_chat_id" value="{{ settings.telegram_chat_id }}">
+    <input type="hidden" name="telegram_enabled" value="{{ settings.telegram_enabled }}">
+    <input type="hidden" name="site_mode" value="{{ settings.site_mode }}">
+    <label>VPS Pool
+      <select name="lb_vps_enabled">
+        <option value="0" {{ 'selected' if settings.lb_vps_enabled != '1' else '' }}>Off</option>
+        <option value="1" {{ 'selected' if settings.lb_vps_enabled == '1' else '' }}>On</option>
+      </select>
+    </label>
+    <label>Heroku Pool
+      <select name="lb_heroku_enabled">
+        <option value="0" {{ 'selected' if settings.lb_heroku_enabled != '1' else '' }}>Off</option>
+        <option value="1" {{ 'selected' if settings.lb_heroku_enabled == '1' else '' }}>On</option>
+      </select>
+    </label>
+    <button class="btn-primary" type="submit">Save</button>
+  </form>
+</section>
+{% endif %}
+
+{% endblock %}
