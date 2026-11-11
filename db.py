@@ -5,11 +5,17 @@ import secrets
 from datetime import datetime, timezone, timedelta
 import aiosqlite
 
-# ── FIX FOR RENDER DISK ──────────────────────────────────────────
+# ── BULLETPROOF DB PATH FIX ──────────────────────────────────────
 DB_PATH = os.getenv("DB_PATH", "kiora.db")
 db_dir = os.path.dirname(DB_PATH)
+
 if db_dir and not os.path.exists(db_dir):
-    os.makedirs(db_dir, exist_ok=True)
+    try:
+        os.makedirs(db_dir, exist_ok=True)
+        print(f"✅ Created database directory: {db_dir}")
+    except Exception as e:
+        print(f"❌ Failed to create {db_dir}: {e}. Falling back to local.")
+        DB_PATH = "kiora.db"
 # ─────────────────────────────────────────────────────────────────
 
 ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "yousafcodes.de@gmail.com")
