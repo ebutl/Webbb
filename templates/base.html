@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}KIORA{% endblock %}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <div class="logo">K</div>
+    <div>
+      <div class="brand-name">KIORA</div>
+      <div class="brand-sub">Autoshopi</div>
+    </div>
+  </div>
+  {% block topnav %}{% endblock %}
+  <div class="userbox">
+    <span class="user-email">{{ u.email }}</span>
+    <span class="pill">{{ u.role }}</span>
+    <a href="/logout" class="btn-ghost">Logout</a>
+  </div>
+</header>
+<main class="main">
+{% block content %}{% endblock %}
+</main>
+<footer class="footer">
+  <span>KIORA · {{ u.email }}</span>
+  <span>© {{ 2026 }}</span>
+</footer>
+</body>
+</html>
