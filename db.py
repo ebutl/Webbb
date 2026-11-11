@@ -1,6 +1,3 @@
-"""
-db.py — SQLite schema + helpers
-"""
 import os
 import json
 import hashlib
@@ -8,11 +5,16 @@ import secrets
 from datetime import datetime, timezone, timedelta
 import aiosqlite
 
+# ── FIX FOR RENDER DISK ──────────────────────────────────────────
 DB_PATH = os.getenv("DB_PATH", "kiora.db")
+db_dir = os.path.dirname(DB_PATH)
+if db_dir and not os.path.exists(db_dir):
+    os.makedirs(db_dir, exist_ok=True)
+# ─────────────────────────────────────────────────────────────────
+
 ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "yousafcodes.de@gmail.com")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "03283877877@_1")
 
-# ── Plans ────────────────────────────────────────────────────────
 PLANS = {
     "free":      {"name": "Free",      "limit": 50,   "mass_limit": 20,    "days": 0},
     "basic":     {"name": "Basic",     "limit": 500,  "mass_limit": 200,   "days": 30},
@@ -126,7 +128,6 @@ async def init_db():
         );
         """)
 
-        # seed admin
         async with c.execute("SELECT id FROM users WHERE email=?", (ADMIN_EMAIL,)) as cur:
             row = await cur.fetchone()
         if not row:
@@ -135,7 +136,6 @@ async def init_db():
                 (ADMIN_EMAIL, hash_pw(ADMIN_PASSWORD), "admin", "unlimited", 999999, now_iso()),
             )
 
-        # seed default settings
         defaults = {
             "telegram_bot_token": "",
             "telegram_chat_id": "",
@@ -148,7 +148,6 @@ async def init_db():
         for k, v in defaults.items():
             await c.execute("INSERT OR IGNORE INTO settings(key, value) VALUES (?,?)", (k, v))
 
-        # seed default APIs
         async with c.execute("SELECT COUNT(*) FROM api_endpoints") as cur:
             n = (await cur.fetchone())[0]
         if n == 0:
@@ -164,7 +163,6 @@ async def init_db():
 
         await c.commit()
 
-# ── Users ────────────────────────────────────────────────────────
 async def get_user_by_email(email: str):
     async with _conn() as c:
         c.row_factory = aiosqlite.Row
@@ -212,7 +210,6 @@ async def delete_user(uid: int):
         await c.execute("DELETE FROM hits WHERE user_id=?", (uid,))
         await c.commit()
 
-# ── Proxies ──────────────────────────────────────────────────────
 async def list_proxies(uid: int):
     async with _conn() as c:
         c.row_factory = aiosqlite.Row
@@ -251,7 +248,6 @@ async def live_proxies(uid: int):
         async with c.execute("SELECT * FROM proxies WHERE user_id=? AND status='live' ORDER BY id", (uid,)) as cur:
             return await cur.fetchall()
 
-# ── APIs ─────────────────────────────────────────────────────────
 async def list_apis():
     async with _conn() as c:
         c.row_factory = aiosqlite.Row
@@ -285,7 +281,6 @@ async def delete_api(aid: int):
         await c.execute("DELETE FROM api_endpoints WHERE id=?", (aid,))
         await c.commit()
 
-# ── Tasks ────────────────────────────────────────────────────────
 async def create_task(tid: str, uid: int, total: int, mode: str):
     async with _conn() as c:
         await c.execute(
@@ -319,7 +314,6 @@ async def list_all_tasks(limit: int = 50):
         async with c.execute("SELECT t.*, u.email FROM tasks t LEFT JOIN users u ON u.id = t.user_id ORDER BY t.started_at DESC LIMIT ?", (limit,)) as cur:
             return await cur.fetchall()
 
-# ── Hits ─────────────────────────────────────────────────────────
 async def save_hit(uid: int, tid: str, cc: str, res: dict, site: str = ""):
     async with _conn() as c:
         await c.execute(
@@ -354,7 +348,6 @@ async def clear_user_hits(uid: int):
         await c.execute("DELETE FROM hits WHERE user_id=?", (uid,))
         await c.commit()
 
-# ── Settings ─────────────────────────────────────────────────────
 async def get_setting(key: str, default: str = "") -> str:
     async with _conn() as c:
         async with c.execute("SELECT value FROM settings WHERE key=?", (key,)) as cur:
@@ -366,7 +359,6 @@ async def set_setting(key: str, value: str):
         await c.execute("INSERT INTO settings(key, value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, value))
         await c.commit()
 
-# ── Redeem codes ─────────────────────────────────────────────────
 async def create_code(code: str, plan: str, days: int, uses: int):
     async with _conn() as c:
         await c.execute(
@@ -380,16 +372,3 @@ async def list_codes():
         c.row_factory = aiosqlite.Row
         async with c.execute("SELECT * FROM redeem_codes ORDER BY id DESC") as cur:
             return await cur.fetchall()
-
-async def redeem_code(uid: int, code: str):
-    code = code.strip().upper()
-    async with _conn() as c:
-        c.row_factory = aiosqlite.Row
-        async with c.execute("SELECT * FROM redeem_codes WHERE code=?", (code,)) as cur:
-            row = await cur.fetchone()
-        if not row: return {"ok": False, "reason": "invalid code"}
-        if row["used"] >= row["max_uses"]: return {"ok": False, "reason": "code used up"}
-        await c.execute("UPDATE redeem_codes SET used = used + 1 WHERE code=?", (code,))
-        await c.commit()
-    await update_user_plan(uid, row["plan"], row["days"])
-    return {"ok": True, "plan": row["plan"], "days": row["days"]}
