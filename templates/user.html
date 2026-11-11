@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+{% block title %}KIORA · {{ u.email }}{% endblock %}
+{% block topnav %}
+<nav class="tabs">
+  <a href="/dashboard" class="{{ 'active' if tab=='dashboard' else '' }}">Dashboard</a>
+  <a href="/proxies"   class="{{ 'active' if tab=='proxies'   else '' }}">Proxies</a>
+  <a href="/cards"     class="{{ 'active' if tab=='cards'     else '' }}">Cards</a>
+  <a href="/hits"      class="{{ 'active' if tab=='hits'      else '' }}">Hits</a>
+</nav>
+{% endblock %}
+{% block content %}
+
+{% if tab == 'dashboard' %}
+<section class="grid">
+  <div class="stat"><span class="stat-label">Plan</span><span class="stat-val">{{ plans[u.plan].name if u.plan in plans else u.plan }}</span></div>
+  <div class="stat"><span class="stat-label">Total Hits</span><span class="stat-val">{{ u.total_hits }}</span></div>
+  <div class="stat"><span class="stat-label">Proxies</span><span class="stat-val">{{ proxies|length }} <small>(live {{ proxies|selectattr('status','equalto','live')|list|length }})</small></span></div>
+  <div class="stat"><span class="stat-label">Tasks</span><span class="stat-val">{{ tasks|length }}</span></div>
+</section>
+
+<section class="panel">
+  <h2>Recent Tasks</h2>
+  {% if tasks %}
+  <table>
+    <thead><tr><th>Task</th><th>Status</th><th>Progress</th><th>Hits</th><th>Started</th></tr></thead>
+    <tbody>
+    {% for t in tasks %}
+      <tr>
+        <td><code>{{ t.id }}</code></td>
+        <td><span class="pill pill-{{ t.status }}">{{ t.status }}</span></td>
+        <td>{{ t.completed }}/{{ t.total }}</td>
+        <td>{{ t.hits }}</td>
+        <td>{{ t.started_at[:19] }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}<p class="muted">No tasks yet.</p>{% endif %}
+</section>
+
+<section class="panel">
+  <h2>Recent Hits</h2>
+  {% if hits %}
+  <table>
+    <thead><tr><th>Card</th><th>Response</th><th>Status</th><th>Date</th></tr></thead>
+    <tbody>
+    {% for h in hits %}
+      <tr>
+        <td><code>{{ h.cc }}</code></td>
+        <td>{{ h.response }}</td>
+        <td><span class="pill pill-{{ h.status }}">{{ h.status }}</span></td>
+        <td>{{ h.created_at[:19] }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}<p class="muted">No hits yet.</p>{% endif %}
+</section>
+
+{% elif tab == 'proxies' %}
+<section class="panel">
+  <h2>Add Proxies</h2>
+  <form method="post" action="/proxies/add">
+    <textarea name="proxies" rows="6" placeholder="host:port:user:pass&#10;or&#10;user:pass@host:port&#10;one per line"></textarea>
+    <div class="row">
+      <button type="submit" class="btn-primary">Add</button>
+    </div>
+  </form>
+  <div class="row row-gap">
+    <form method="post" action="/proxies/check"><button class="btn-secondary" type="submit">Test All</button></form>
+    <form method="post" action="/proxies/clear" onsubmit="return confirm('Clear all proxies?')"><button class="btn-danger" type="submit">Clear All</button></form>
+  </div>
+</section>
+
+<section class="panel">
+  <h2>Your Proxies ({{ proxies|length }})</h2>
+  {% if proxies %}
+  <table>
+    <thead><tr><th>Proxy</th><th>Status</th><th>Latency</th><th>Checked</th><th></th></tr></thead>
+    <tbody>
+    {% for p in proxies %}
+      <tr>
+        <td><code>{{ p.proxy }}</code></td>
+        <td><span class="pill pill-{{ p.status }}">{{ p.status }}</span></td>
+        <td>{{ '%.2fs'|format(p.latency) if p.latency else '—' }}</td>
+        <td>{{ p.checked_at[:19] if p.checked_at else '—' }}</td>
+        <td>
+          <form method="post" action="/proxies/delete/{{ p.id }}"><button class="btn-link" type="submit">delete</button></form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}<p class="muted">No proxies yet.</p>{% endif %}
+</section>
+
+{% elif tab == 'cards' %}
+<section class="panel">
+  <h2>Run Check</h2>
+  {% if request.query_params.get('error') == 'no_proxies' %}<div class="alert">Add at least one live proxy first.</div>{% endif %}
+  {% if request.query_params.get('error', '').startswith('limit_') %}<div class="alert">You sent more than your plan allows ({{ request.query_params.get('error').replace('limit_','') }}).</div>{% endif %}
+  {% if request.query_params.get('started') %}<div class="alert alert-ok">Task started: <code>{{ request.query_params.get('started') }}</code>. You can close this tab.</div>{% endif %}
+  <form method="post" action="/start-task">
+    <label>Cards (one per line, format CC|MM|YY|CVV)</label>
+    <textarea name="cards" rows="10" required placeholder="4111111111111111|12|30|123&#10;5555555555554444|08|28|456"></textarea>
+    <div class="row">
+      <select name="mode">
+        <option value="shopify">Shopify</option>
+      </select>
+      <button type="submit" class="btn-primary">Start Check</button>
+    </div>
+  </form>
+</section>
+
+{% elif tab == 'hits' %}
+<section class="panel">
+  <h2>Your Hits ({{ hits|length }})</h2>
+  {% if hits %}
+  <table>
+    <thead><tr><th>Card</th><th>Status</th><th>Response</th><th>Amount</th><th>Gateway</th><th>Date</th></tr></thead>
+    <tbody>
+    {% for h in hits %}
+      <tr>
+        <td><code>{{ h.cc }}</code></td>
+        <td><span class="pill pill-{{ h.status }}">{{ h.status }}</span></td>
+        <td>{{ h.response }}</td>
+        <td>${{ '%.2f'|format(h.amount) }} {{ h.currency }}</td>
+        <td>{{ h.gateway }}</td>
+        <td>{{ h.created_at[:19] }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}<p class="muted">No hits yet.</p>{% endif %}
+</section>
+{% endif %}
+
+{% endblock %}
